@@ -87,6 +87,9 @@ typedef struct MVPredict {
     MVectors mv;
 } MVPredict;
 
+/* Stride of the scratch buffer used for edge-emulated motion compensation. */
+#define BINK2_EDGE_STRIDE 32
+
 /*
  * Decoder context
  */
@@ -121,6 +124,7 @@ typedef struct Bink2Context {
 
     int             comp;
     int             mb_pos;
+    DECLARE_ALIGNED(16, uint8_t, edge_buf[BINK2_EDGE_STRIDE * 24]);
     unsigned        flags;
     unsigned        frame_flags;
 } Bink2Context;
@@ -134,6 +138,24 @@ enum BlockTypes {
     MOTION_BLOCK,    ///< block is copied from previous frame with some offset
     RESIDUE_BLOCK,   ///< motion block with some difference added
 };
+
+/**
+ * Fetch a bw x bh block at (x0, y0) from a reference plane, replicating the
+ * edge pixels when the block reaches outside of it. Motion vectors may point
+ * outside the reference picture, and the interpolation filters read a few
+ * pixels beyond the block itself, so the plain pointer arithmetic used on the
+ * fast path would read out of bounds there.
+ */
+static void bink2_edge_copy(uint8_t *dst, const uint8_t *src, int sstride,
+                            int x0, int y0, int bw, int bh, int w, int h)
+{
+    for (int j = 0; j < bh; j++) {
+        const uint8_t *srow = src + av_clip(y0 + j, 0, h - 1) * sstride;
+
+        for (int i = 0; i < bw; i++)
+            dst[j * BINK2_EDGE_STRIDE + i] = srow[av_clip(x0 + i, 0, w - 1)];
+    }
+}
 
 #include "bink2f.c"
 #include "bink2g.c"

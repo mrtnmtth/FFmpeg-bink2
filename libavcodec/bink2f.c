@@ -685,11 +685,17 @@ static void bink2f_c_mc(Bink2Context *c, int x, int y,
     uint8_t *msrc;
     uint8_t temp[8*9];
 
-    if (mv_x < 0 || mv_x >= width ||
-        mv_y < 0 || mv_y >= height)
-        return;
+    width  = FFALIGN(width,  16);
+    height = FFALIGN(height, 16);
 
-    msrc = src + mv_x + mv_y * sstride;
+    if (mv_x < 0 || mv_y < 0 || mv_x + 9 > width || mv_y + 9 > height) {
+        bink2_edge_copy(c->edge_buf, src, sstride,
+                        mv_x, mv_y, 9, 9, width, height);
+        msrc    = c->edge_buf;
+        sstride = BINK2_EDGE_STRIDE;
+    } else {
+        msrc = src + mv_x + mv_y * sstride;
+    }
 
     switch (mode) {
     case 0:
@@ -865,11 +871,19 @@ static void bink2f_y_mc(Bink2Context *c, int x, int y,
 {
     uint8_t *msrc;
 
-    if (mv_x < 0 || mv_x >= width ||
-        mv_y < 0 || mv_y >= height)
-        return;
+    /* the reference picture covers the 32-aligned area, not just the
+     * visible one */
+    width  = FFALIGN(width,  32);
+    height = FFALIGN(height, 32);
 
-    msrc = src + mv_x + mv_y * sstride;
+    if (mv_x < 2 || mv_y < 2 || mv_x + 19 > width || mv_y + 19 > height) {
+        bink2_edge_copy(c->edge_buf, src, sstride,
+                        mv_x - 2, mv_y - 2, 21, 21, width, height);
+        msrc    = c->edge_buf + 2 + 2 * BINK2_EDGE_STRIDE;
+        sstride = BINK2_EDGE_STRIDE;
+    } else {
+        msrc = src + mv_x + mv_y * sstride;
+    }
 
     if (mode == 0) {
         copy_block16(dst, msrc, stride, sstride, 16);
