@@ -214,9 +214,11 @@ static void bink2_get_block_flags(GetBitContext *gb, int offset, int size, uint8
             flags_left -= nb_coded;
             if (flags_left > 0) {
                 temp = get_bits(gb, bits);
+                mode = temp == (1 << bits) - 1U ? 1 : 3;
+                /* A run past the flags there are would write past the array. */
+                temp = FFMIN(temp, flags_left);
                 flags_left -= temp;
                 nb_coded += temp;
-                mode = temp == (1 << bits) - 1U ? 1 : 3;
             }
 
             temp = (flag << 0x1f) >> 0x1f & 0xff;
