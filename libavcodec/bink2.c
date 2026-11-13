@@ -310,6 +310,13 @@ static int bink2_decode_frame(AVCodecContext *avctx, AVFrame *frame,
 
     skip_bits_long(gb, 32 + 32 * (c->num_slices - 1));
 
+    /* Frame flag 0x80000: the frame has no alpha data. Its alpha plane is one
+     * value throughout, the frame flags' top byte: 0 (transparent) where an
+     * interface piece starts blank, 255 (opaque) through most of the intro. */
+    if (c->has_alpha && (c->frame_flags & 0x80000))
+        for (int y = 0; y < avctx->height; y++)
+            memset(frame->data[3] + y * frame->linesize[3], c->frame_flags >> 24, avctx->width);
+
     if (c->frame_flags & 0x10000) {
         if (!(c->frame_flags & 0x8000))
             bink2_get_block_flags(gb, 1, (((avctx->height + 15) & ~15) >> 3) - 1, c->row_cbp);

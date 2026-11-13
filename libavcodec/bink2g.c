@@ -1106,6 +1106,9 @@ static int bink2g_decode_slice(Bink2Context *c,
     int w = c->avctx->width;
     int h = c->avctx->height;
     int ret = 0, dq, flags;
+    /* Frame flag 0x80000: the frame has no alpha data; its plane was filled
+     * with one value before the slices (bink2.c). */
+    const int alpha_coded = c->has_alpha && !(c->frame_flags & 0x80000);
 
     memset(c->prev_q, 0, ((c->avctx->width + 31) / 32) * sizeof(*c->prev_q));
     memset(c->prev_mv, 0, ((c->avctx->width + 31) / 32) * sizeof(*c->prev_mv));
@@ -1189,7 +1192,7 @@ static int bink2g_decode_slice(Bink2Context *c,
                                                  dst[1] + x/2, stride[1], flags);
                 if (ret < 0)
                     goto fail;
-                if (c->has_alpha) {
+                if (alpha_coded) {
                     c->comp = 3;
                     ret = bink2g_decode_intra_luma(c, gb, c->iblock, &a_cbp_intra, *intra_q, &c->dsp,
                                                    dst[3] + x, stride[3], flags);
@@ -1208,7 +1211,7 @@ static int bink2g_decode_slice(Bink2Context *c,
                              stride[1], sstride[1], 16);
                 copy_block16(dst[2] + (x/2), src[2] + (x/2) + sstride[2] * (y/2),
                              stride[2], sstride[2], 16);
-                if (c->has_alpha) {
+                if (alpha_coded) {
                     copy_block16(dst[3] + x, src[3] + x + sstride[3] * y,
                                  stride[3], sstride[3], 32);
                     copy_block16(dst[3] + x + 16, src[3] + x + 16 + sstride[3] * y,
@@ -1243,7 +1246,7 @@ static int bink2g_decode_slice(Bink2Context *c,
                                                 w/2, h/2);
                 if (ret < 0)
                     goto fail;
-                if (c->has_alpha) {
+                if (alpha_coded) {
                     c->comp = 3;
                     ret = bink2g_mcompensate_luma(c, x, y,
                                                   dst[3], stride[3],
@@ -1286,7 +1289,7 @@ static int bink2g_decode_slice(Bink2Context *c,
                                                 w/2, h/2);
                 if (ret < 0)
                     goto fail;
-                if (c->has_alpha) {
+                if (alpha_coded) {
                     c->comp = 3;
                     ret = bink2g_mcompensate_luma(c, x, y,
                                                   dst[3], stride[3],
@@ -1315,7 +1318,7 @@ static int bink2g_decode_slice(Bink2Context *c,
                     u_cbp_inter = 0;
                     v_cbp_inter = 0;
                 }
-                if (c->has_alpha) {
+                if (alpha_coded) {
                     c->comp = 3;
                     ret = bink2g_decode_inter_luma(c, gb, c->iblock, &a_cbp_inter, *inter_q, &c->dsp,
                                                    dst[3] + x, stride[3], flags);
