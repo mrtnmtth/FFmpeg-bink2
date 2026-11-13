@@ -899,8 +899,10 @@ static void bink2g_c_mc(Bink2Context *c, int x, int y,
                         int mv_x, int mv_y,
                         int mode)
 {
+    /* Quarter-pel weights, in eighths: (mode & 3) across, (mode >> 2) down. */
+    static const int weight[4][2] = { { 8, 0 }, { 6, 2 }, { 4, 4 }, { 2, 6 } };
+    const int *wx = weight[mode & 3], *wy = weight[mode >> 2];
     uint8_t *msrc;
-    uint8_t temp[8*9];
 
     width  = FFALIGN(width,  16);
     height = FFALIGN(height, 16);
@@ -914,166 +916,15 @@ static void bink2g_c_mc(Bink2Context *c, int x, int y,
         msrc = src + mv_x + mv_y * sstride;
     }
 
-    switch (mode) {
-    case 0:
-        copy_block8(dst, msrc, stride, sstride, 8);
-        break;
-    case 1:
-        for (int j = 0; j < 8; j++) {
-            for (int i = 0; i < 8; i++)
-                dst[i] = av_clip_uint8(CH1FILTER(msrc + i));
-            dst  += stride;
-            msrc += sstride;
+    /* One bilinear filter, rounded once at the end, as Bink does: filtering
+     * across and then down with a rounding after each drifts upwards. */
+    for (int j = 0; j < 8; j++) {
+        for (int i = 0; i < 8; i++) {
+            const uint8_t *p = msrc + j * sstride + i;
+            int v = wy[0] * (wx[0] * p[0]       + wx[1] * p[1]) +
+                    wy[1] * (wx[0] * p[sstride] + wx[1] * p[sstride + 1]);
+            dst[j * stride + i] = av_clip_uint8((v + 32) >> 6);
         }
-        break;
-    case 2:
-        for (int j = 0; j < 8; j++) {
-            for (int i = 0; i < 8; i++)
-                dst[i] = av_clip_uint8(CH2FILTER(msrc + i));
-            dst  += stride;
-            msrc += sstride;
-        }
-        break;
-    case 3:
-        for (int j = 0; j < 8; j++) {
-            for (int i = 0; i < 8; i++)
-                dst[i] = av_clip_uint8(CH3FILTER(msrc + i));
-            dst  += stride;
-            msrc += sstride;
-        }
-        break;
-    case 4:
-        for (int j = 0; j < 8; j++) {
-            for (int i = 0; i < 8; i++)
-                dst[i*stride] = av_clip_uint8(CV1FILTER(msrc + i*sstride, sstride));
-            dst  += 1;
-            msrc += 1;
-        }
-        break;
-    case 5:
-        for (int i = 0; i < 9; i++) {
-            for (int j = 0; j < 8; j++)
-                temp[i*8+j] = av_clip_uint8(CH1FILTER(msrc + j));
-            msrc += sstride;
-        }
-        for (int j = 0; j < 8; j++) {
-            for (int i = 0; i < 8; i++)
-                dst[i] = av_clip_uint8(CV1FILTER(temp+j*8+i, 8));
-            dst  += stride;
-        }
-        break;
-    case 6:
-        for (int i = 0; i < 9; i++) {
-            for (int j = 0; j < 8; j++)
-                temp[i*8+j] = av_clip_uint8(CH2FILTER(msrc + j));
-            msrc += sstride;
-        }
-        for (int j = 0; j < 8; j++) {
-            for (int i = 0; i < 8; i++)
-                dst[i] = av_clip_uint8(CV1FILTER(temp+j*8+i, 8));
-            dst  += stride;
-        }
-        break;
-    case 7:
-        for (int i = 0; i < 9; i++) {
-            for (int j = 0; j < 8; j++)
-                temp[i*8+j] = av_clip_uint8(CH3FILTER(msrc + j));
-            msrc += sstride;
-        }
-        for (int j = 0; j < 8; j++) {
-            for (int i = 0; i < 8; i++)
-                dst[i] = av_clip_uint8(CV1FILTER(temp+j*8+i, 8));
-            dst  += stride;
-        }
-        break;
-    case 8:
-        for (int j = 0; j < 8; j++) {
-            for (int i = 0; i < 8; i++)
-                dst[i*stride] = av_clip_uint8(CV2FILTER(msrc + i*sstride, sstride));
-            dst  += 1;
-            msrc += 1;
-        }
-        break;
-    case 9:
-        for (int i = 0; i < 9; i++) {
-            for (int j = 0; j < 8; j++)
-                temp[i*8+j] = av_clip_uint8(CH1FILTER(msrc + j));
-            msrc += sstride;
-        }
-        for (int j = 0; j < 8; j++) {
-            for (int i = 0; i < 8; i++)
-                dst[i] = av_clip_uint8(CV2FILTER(temp+j*8+i, 8));
-            dst  += stride;
-        }
-        break;
-    case 10:
-        for (int i = 0; i < 9; i++) {
-            for (int j = 0; j < 8; j++)
-                temp[i*8+j] = av_clip_uint8(CH2FILTER(msrc + j));
-            msrc += sstride;
-        }
-        for (int j = 0; j < 8; j++) {
-            for (int i = 0; i < 8; i++)
-                dst[i] = av_clip_uint8(CV2FILTER(temp+j*8+i, 8));
-            dst  += stride;
-        }
-        break;
-    case 11:
-        for (int i = 0; i < 9; i++) {
-            for (int j = 0; j < 8; j++)
-                temp[i*8+j] = av_clip_uint8(CH3FILTER(msrc + j));
-            msrc += sstride;
-        }
-        for (int j = 0; j < 8; j++) {
-            for (int i = 0; i < 8; i++)
-                dst[i] = av_clip_uint8(CV2FILTER(temp+j*8+i, 8));
-            dst  += stride;
-        }
-        break;
-    case 12:
-        for (int j = 0; j < 8; j++) {
-            for (int i = 0; i < 8; i++)
-                dst[i*stride] = av_clip_uint8(CV3FILTER(msrc + i*sstride, sstride));
-            dst  += 1;
-            msrc += 1;
-        }
-        break;
-    case 13:
-        for (int i = 0; i < 9; i++) {
-            for (int j = 0; j < 8; j++)
-                temp[i*8+j] = av_clip_uint8(CH1FILTER(msrc + j));
-            msrc += sstride;
-        }
-        for (int j = 0; j < 8; j++) {
-            for (int i = 0; i < 8; i++)
-                dst[i] = av_clip_uint8(CV3FILTER(temp+j*8+i, 8));
-            dst  += stride;
-        }
-        break;
-    case 14:
-        for (int i = 0; i < 9; i++) {
-            for (int j = 0; j < 8; j++)
-                temp[i*8+j] = av_clip_uint8(CH2FILTER(msrc + j));
-            msrc += sstride;
-        }
-        for (int j = 0; j < 8; j++) {
-            for (int i = 0; i < 8; i++)
-                dst[i] = av_clip_uint8(CV3FILTER(temp+j*8+i, 8));
-            dst  += stride;
-        }
-        break;
-    case 15:
-        for (int i = 0; i < 9; i++) {
-            for (int j = 0; j < 8; j++)
-                temp[i*8+j] = av_clip_uint8(CH3FILTER(msrc + j));
-            msrc += sstride;
-        }
-        for (int j = 0; j < 8; j++) {
-            for (int i = 0; i < 8; i++)
-                dst[i] = av_clip_uint8(CV3FILTER(temp+j*8+i, 8));
-            dst  += stride;
-        }
-        break;
     }
 }
 
