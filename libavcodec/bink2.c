@@ -214,9 +214,11 @@ static void bink2_get_block_flags(GetBitContext *gb, int offset, int size, uint8
             flags_left -= nb_coded;
             if (flags_left > 0) {
                 temp = get_bits(gb, bits);
+                mode = temp == (1 << bits) - 1U ? 1 : 3;
+                /* A run past the flags there are would write past the array. */
+                temp = FFMIN(temp, flags_left);
                 flags_left -= temp;
                 nb_coded += temp;
-                mode = temp == (1 << bits) - 1U ? 1 : 3;
             }
 
             temp = (flag << 0x1f) >> 0x1f & 0xff;
@@ -309,6 +311,15 @@ static int bink2_decode_frame(AVCodecContext *avctx, AVFrame *frame,
     c->slice_height[c->num_slices - 1] = height_a;
 
     skip_bits_long(gb, 32 + 32 * (c->num_slices - 1));
+
+    /* Frame flag 0x80000: the frame has no alpha data. Its alpha plane is one
+     * value throughout, the frame flags' top byte: 0 (transparent) where an
+     * interface piece starts blank, 255 (opaque) through most of the intro.
+     * The whole decoded area, 32-aligned, is filled: motion compensation in
+     * later frames reads the rows below the picture too. */
+    if (c->has_alpha && (c->frame_flags & 0x80000))
+        for (int y = 0; y < height_a; y++)
+            memset(frame->data[3] + y * frame->linesize[3], c->frame_flags >> 24, FFALIGN(avctx->width, 32));
 
     if (c->frame_flags & 0x10000) {
         if (!(c->frame_flags & 0x8000))

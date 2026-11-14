@@ -701,7 +701,10 @@ static int bink2g_decode_inter_luma(Bink2Context *c,
 
     *prev_cbp = cbp = bink2g_decode_cbp_luma(c, gb, *prev_cbp);
 
-    bink2g_decode_dc(c, gb, dc, 1, q, -1023, 1023, 0xA8);
+    /* A residual DC can be as much as a whole plane's range (-255 to 255 as
+     * pixels, -2040 to 2040 here): clamped at 1023, a cut from dark to bright
+     * came out 62 levels short (GDI13, frame 926, against Bink's own player). */
+    bink2g_decode_dc(c, gb, dc, 1, q, -2047, 2047, 0xA8);
 
     for (int i = 0; i < 4; i++) {
         ret = bink2g_decode_ac(gb, bink2g_scan, block, cbp >> (4 * i),
@@ -732,7 +735,7 @@ static int bink2g_decode_inter_chroma(Bink2Context *c,
 
     *prev_cbp = cbp = bink2g_decode_cbp_chroma(gb, *prev_cbp);
 
-    bink2g_decode_dc(c, gb, dc, 0, q, -1023, 1023, 0xA8);
+    bink2g_decode_dc(c, gb, dc, 0, q, -2047, 2047, 0xA8); /* as above */
 
     ret = bink2g_decode_ac(gb, bink2g_scan, block, cbp,
                            q, bink2g_inter_qmat);
@@ -899,8 +902,10 @@ static void bink2g_c_mc(Bink2Context *c, int x, int y,
                         int mv_x, int mv_y,
                         int mode)
 {
+    /* Quarter-pel weights, in eighths: (mode & 3) across, (mode >> 2) down. */
+    static const int weight[4][2] = { { 8, 0 }, { 6, 2 }, { 4, 4 }, { 2, 6 } };
+    const int *wx = weight[mode & 3], *wy = weight[mode >> 2];
     uint8_t *msrc;
-    uint8_t temp[8*9];
 
     width  = FFALIGN(width,  16);
     height = FFALIGN(height, 16);
@@ -914,166 +919,15 @@ static void bink2g_c_mc(Bink2Context *c, int x, int y,
         msrc = src + mv_x + mv_y * sstride;
     }
 
-    switch (mode) {
-    case 0:
-        copy_block8(dst, msrc, stride, sstride, 8);
-        break;
-    case 1:
-        for (int j = 0; j < 8; j++) {
-            for (int i = 0; i < 8; i++)
-                dst[i] = av_clip_uint8(CH1FILTER(msrc + i));
-            dst  += stride;
-            msrc += sstride;
+    /* One bilinear filter, rounded once at the end, as Bink does: filtering
+     * across and then down with a rounding after each drifts upwards. */
+    for (int j = 0; j < 8; j++) {
+        for (int i = 0; i < 8; i++) {
+            const uint8_t *p = msrc + j * sstride + i;
+            int v = wy[0] * (wx[0] * p[0]       + wx[1] * p[1]) +
+                    wy[1] * (wx[0] * p[sstride] + wx[1] * p[sstride + 1]);
+            dst[j * stride + i] = av_clip_uint8((v + 32) >> 6);
         }
-        break;
-    case 2:
-        for (int j = 0; j < 8; j++) {
-            for (int i = 0; i < 8; i++)
-                dst[i] = av_clip_uint8(CH2FILTER(msrc + i));
-            dst  += stride;
-            msrc += sstride;
-        }
-        break;
-    case 3:
-        for (int j = 0; j < 8; j++) {
-            for (int i = 0; i < 8; i++)
-                dst[i] = av_clip_uint8(CH3FILTER(msrc + i));
-            dst  += stride;
-            msrc += sstride;
-        }
-        break;
-    case 4:
-        for (int j = 0; j < 8; j++) {
-            for (int i = 0; i < 8; i++)
-                dst[i*stride] = av_clip_uint8(CV1FILTER(msrc + i*sstride, sstride));
-            dst  += 1;
-            msrc += 1;
-        }
-        break;
-    case 5:
-        for (int i = 0; i < 9; i++) {
-            for (int j = 0; j < 8; j++)
-                temp[i*8+j] = av_clip_uint8(CH1FILTER(msrc + j));
-            msrc += sstride;
-        }
-        for (int j = 0; j < 8; j++) {
-            for (int i = 0; i < 8; i++)
-                dst[i] = av_clip_uint8(CV1FILTER(temp+j*8+i, 8));
-            dst  += stride;
-        }
-        break;
-    case 6:
-        for (int i = 0; i < 9; i++) {
-            for (int j = 0; j < 8; j++)
-                temp[i*8+j] = av_clip_uint8(CH2FILTER(msrc + j));
-            msrc += sstride;
-        }
-        for (int j = 0; j < 8; j++) {
-            for (int i = 0; i < 8; i++)
-                dst[i] = av_clip_uint8(CV1FILTER(temp+j*8+i, 8));
-            dst  += stride;
-        }
-        break;
-    case 7:
-        for (int i = 0; i < 9; i++) {
-            for (int j = 0; j < 8; j++)
-                temp[i*8+j] = av_clip_uint8(CH3FILTER(msrc + j));
-            msrc += sstride;
-        }
-        for (int j = 0; j < 8; j++) {
-            for (int i = 0; i < 8; i++)
-                dst[i] = av_clip_uint8(CV1FILTER(temp+j*8+i, 8));
-            dst  += stride;
-        }
-        break;
-    case 8:
-        for (int j = 0; j < 8; j++) {
-            for (int i = 0; i < 8; i++)
-                dst[i*stride] = av_clip_uint8(CV2FILTER(msrc + i*sstride, sstride));
-            dst  += 1;
-            msrc += 1;
-        }
-        break;
-    case 9:
-        for (int i = 0; i < 9; i++) {
-            for (int j = 0; j < 8; j++)
-                temp[i*8+j] = av_clip_uint8(CH1FILTER(msrc + j));
-            msrc += sstride;
-        }
-        for (int j = 0; j < 8; j++) {
-            for (int i = 0; i < 8; i++)
-                dst[i] = av_clip_uint8(CV2FILTER(temp+j*8+i, 8));
-            dst  += stride;
-        }
-        break;
-    case 10:
-        for (int i = 0; i < 9; i++) {
-            for (int j = 0; j < 8; j++)
-                temp[i*8+j] = av_clip_uint8(CH2FILTER(msrc + j));
-            msrc += sstride;
-        }
-        for (int j = 0; j < 8; j++) {
-            for (int i = 0; i < 8; i++)
-                dst[i] = av_clip_uint8(CV2FILTER(temp+j*8+i, 8));
-            dst  += stride;
-        }
-        break;
-    case 11:
-        for (int i = 0; i < 9; i++) {
-            for (int j = 0; j < 8; j++)
-                temp[i*8+j] = av_clip_uint8(CH3FILTER(msrc + j));
-            msrc += sstride;
-        }
-        for (int j = 0; j < 8; j++) {
-            for (int i = 0; i < 8; i++)
-                dst[i] = av_clip_uint8(CV2FILTER(temp+j*8+i, 8));
-            dst  += stride;
-        }
-        break;
-    case 12:
-        for (int j = 0; j < 8; j++) {
-            for (int i = 0; i < 8; i++)
-                dst[i*stride] = av_clip_uint8(CV3FILTER(msrc + i*sstride, sstride));
-            dst  += 1;
-            msrc += 1;
-        }
-        break;
-    case 13:
-        for (int i = 0; i < 9; i++) {
-            for (int j = 0; j < 8; j++)
-                temp[i*8+j] = av_clip_uint8(CH1FILTER(msrc + j));
-            msrc += sstride;
-        }
-        for (int j = 0; j < 8; j++) {
-            for (int i = 0; i < 8; i++)
-                dst[i] = av_clip_uint8(CV3FILTER(temp+j*8+i, 8));
-            dst  += stride;
-        }
-        break;
-    case 14:
-        for (int i = 0; i < 9; i++) {
-            for (int j = 0; j < 8; j++)
-                temp[i*8+j] = av_clip_uint8(CH2FILTER(msrc + j));
-            msrc += sstride;
-        }
-        for (int j = 0; j < 8; j++) {
-            for (int i = 0; i < 8; i++)
-                dst[i] = av_clip_uint8(CV3FILTER(temp+j*8+i, 8));
-            dst  += stride;
-        }
-        break;
-    case 15:
-        for (int i = 0; i < 9; i++) {
-            for (int j = 0; j < 8; j++)
-                temp[i*8+j] = av_clip_uint8(CH3FILTER(msrc + j));
-            msrc += sstride;
-        }
-        for (int j = 0; j < 8; j++) {
-            for (int i = 0; i < 8; i++)
-                dst[i] = av_clip_uint8(CV3FILTER(temp+j*8+i, 8));
-            dst  += stride;
-        }
-        break;
     }
 }
 
@@ -1255,6 +1109,9 @@ static int bink2g_decode_slice(Bink2Context *c,
     int w = c->avctx->width;
     int h = c->avctx->height;
     int ret = 0, dq, flags;
+    /* Frame flag 0x80000: the frame has no alpha data; its plane was filled
+     * with one value before the slices (bink2.c). */
+    const int alpha_coded = c->has_alpha && !(c->frame_flags & 0x80000);
 
     memset(c->prev_q, 0, ((c->avctx->width + 31) / 32) * sizeof(*c->prev_q));
     memset(c->prev_mv, 0, ((c->avctx->width + 31) / 32) * sizeof(*c->prev_mv));
@@ -1338,7 +1195,7 @@ static int bink2g_decode_slice(Bink2Context *c,
                                                  dst[1] + x/2, stride[1], flags);
                 if (ret < 0)
                     goto fail;
-                if (c->has_alpha) {
+                if (alpha_coded) {
                     c->comp = 3;
                     ret = bink2g_decode_intra_luma(c, gb, c->iblock, &a_cbp_intra, *intra_q, &c->dsp,
                                                    dst[3] + x, stride[3], flags);
@@ -1357,7 +1214,7 @@ static int bink2g_decode_slice(Bink2Context *c,
                              stride[1], sstride[1], 16);
                 copy_block16(dst[2] + (x/2), src[2] + (x/2) + sstride[2] * (y/2),
                              stride[2], sstride[2], 16);
-                if (c->has_alpha) {
+                if (alpha_coded) {
                     copy_block16(dst[3] + x, src[3] + x + sstride[3] * y,
                                  stride[3], sstride[3], 32);
                     copy_block16(dst[3] + x + 16, src[3] + x + 16 + sstride[3] * y,
@@ -1392,7 +1249,7 @@ static int bink2g_decode_slice(Bink2Context *c,
                                                 w/2, h/2);
                 if (ret < 0)
                     goto fail;
-                if (c->has_alpha) {
+                if (alpha_coded) {
                     c->comp = 3;
                     ret = bink2g_mcompensate_luma(c, x, y,
                                                   dst[3], stride[3],
@@ -1435,7 +1292,7 @@ static int bink2g_decode_slice(Bink2Context *c,
                                                 w/2, h/2);
                 if (ret < 0)
                     goto fail;
-                if (c->has_alpha) {
+                if (alpha_coded) {
                     c->comp = 3;
                     ret = bink2g_mcompensate_luma(c, x, y,
                                                   dst[3], stride[3],
@@ -1464,7 +1321,7 @@ static int bink2g_decode_slice(Bink2Context *c,
                     u_cbp_inter = 0;
                     v_cbp_inter = 0;
                 }
-                if (c->has_alpha) {
+                if (alpha_coded) {
                     c->comp = 3;
                     ret = bink2g_decode_inter_luma(c, gb, c->iblock, &a_cbp_inter, *inter_q, &c->dsp,
                                                    dst[3] + x, stride[3], flags);

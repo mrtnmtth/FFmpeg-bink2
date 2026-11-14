@@ -44,6 +44,10 @@ audio packet is never released and the decoder retries it forever.
 | avcodec/bink2: fix out-of-bounds reads in motion compensation | Only the block's top-left corner was bounds-checked, while the interpolation filters read up to 18 px beyond it. Segfaulted at 720x460 and 720x480. Now bounded with an edge-replicating fallback. |
 | avcodec/bink2: read the column CBP flags for the 32-aligned width | Read for the 16-aligned width instead. Identical at 1920 and 3840, but at width 720 it read two flags too few and lost bitstream sync on every inter frame. |
 | avcodec/binkaudio: add Bink Audio 2 support | `.bk2` audio failed as `Incomplete packet`. Backport of Peter Ross' \<pross@xvid.org\> decoder ([PR #20359](https://code.ffmpeg.org/FFmpeg/FFmpeg/pulls/20359), [patchwork 56800](https://patchwork.ffmpeg.org/patch/56800/)), with detection extended to `KB2*` container tags. |
+| avcodec/bink2: filter chroma motion compensation once, rounding at the end | Filtered across, rounded, then filtered down and rounded again, drifting upwards in long runs of inter frames (magenta faces). Now one bilinear filter rounded once, matching RAD's player on 99.0 to 99.6% of pixels. |
+| avcodec/bink2: fill the alpha plane of frames without alpha data | Frame flag `0x80000` means no alpha data; the plane is then filled with the frame flags' top byte. Every such frame failed as `Invalid data`. Checked against RAD Video Tools' PNG exports with alpha. |
+| avcodec/bink2: widen the clamp on inter-block DC to +-2047 | Clamped at +-1023 (-128..127 as pixels), so a cut from dark to bright came out up to 62 levels short. |
+| avcodec/bink2: cap block flag runs at the flags left | A damaged file could write past the row or column flag array (AddressSanitizer). |
 
 ## Building
 
@@ -56,7 +60,9 @@ Add `--disable-x86asm` if nasm is missing; the Bink 2 decoder is plain C.
 
 136 `.bk2` files decode without errors, from 3840x2160 to 720x460, including one
 with alpha and one of 98 minutes; every audio track decodes to its exact declared
-length. Only container revision `KB2n` has been tested. Not upstreamable as-is.
+length. The 438 movies of the Command & Conquer Remastered Collection (revision
+`KB2j`, 80 of them with alpha) decode without errors too. Only revisions `KB2j`
+and `KB2n` have been tested. Not upstreamable as-is.
 
 ## License
 
