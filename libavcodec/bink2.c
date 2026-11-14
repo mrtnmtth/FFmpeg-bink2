@@ -314,10 +314,12 @@ static int bink2_decode_frame(AVCodecContext *avctx, AVFrame *frame,
 
     /* Frame flag 0x80000: the frame has no alpha data. Its alpha plane is one
      * value throughout, the frame flags' top byte: 0 (transparent) where an
-     * interface piece starts blank, 255 (opaque) through most of the intro. */
+     * interface piece starts blank, 255 (opaque) through most of the intro.
+     * The whole decoded area, 32-aligned, is filled: motion compensation in
+     * later frames reads the rows below the picture too. */
     if (c->has_alpha && (c->frame_flags & 0x80000))
-        for (int y = 0; y < avctx->height; y++)
-            memset(frame->data[3] + y * frame->linesize[3], c->frame_flags >> 24, avctx->width);
+        for (int y = 0; y < height_a; y++)
+            memset(frame->data[3] + y * frame->linesize[3], c->frame_flags >> 24, FFALIGN(avctx->width, 32));
 
     if (c->frame_flags & 0x10000) {
         if (!(c->frame_flags & 0x8000))
